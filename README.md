@@ -1,4 +1,4 @@
-<img width="768" height="512" alt="Jul 14, 2026, 01_13_17 AM" src="https://github.com/user-attachments/assets/103d7d4a-cb6f-4d17-bf0a-b6d805ca7156" />
+<img width="384" height="256" alt="Jul 14, 2026, 01_13_17 AM" src="https://github.com/user-attachments/assets/103d7d4a-cb6f-4d17-bf0a-b6d805ca7156" />
 
 # tchat
 
