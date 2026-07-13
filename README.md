@@ -2,9 +2,11 @@
 
 tchat is a lightweight terminal app that lets you chat with AI models using your own API keys.
 
-I made it to be simple, fast, and usable from a terminal without needing a full desktop app. It can be used for normal conversations, coding help, debugging, working with files, and running approved commands.
+I created it to be fast, simple, and usable from a terminal without needing a full desktop app. It can be used for everyday conversations, coding, debugging, working with files, and running approved terminal commands.
 
-It was mainly built for Termux on Android, but it is designed to work in other Bash-based terminal environments too.
+It was primarily built for Termux on Android, but it is designed to work in other Bash-based terminal environments as well.
+
+Every feature, idea, design decision, improvement, and bug fix was planned and directed by me. AI was used as a coding assistant during development, while I handled the overall architecture, testing, debugging, and refinement of the project.
 
 ## Features
 
