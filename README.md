@@ -102,6 +102,12 @@ Your API keys are stored locally on your device.
 
 Do not upload your `keys.json` file or any real API keys to GitHub.
 
+## Why "tchat"?
+
+The name **tchat** stands for **Termux Chat**.
+
+The project originally started as a lightweight AI chat client for Termux on Android. Although it has since grown to support other Bash-based terminal environments, the original name has stayed.
+
 ## Security
 
 tchat asks for confirmation before running terminal commands.
