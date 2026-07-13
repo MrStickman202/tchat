@@ -1,3 +1,5 @@
+<img width="1536" height="1024" alt="Jul 14, 2026, 01_13_17 AM" src="https://github.com/user-attachments/assets/103d7d4a-cb6f-4d17-bf0a-b6d805ca7156" />
+
 # tchat
 
 tchat is a lightweight terminal app that lets you chat with AI models using your own API keys.
