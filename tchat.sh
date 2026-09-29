@@ -1,14 +1,16 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 
 # ─────────────────────────────────────────
-#  tchat v3.0 — Multi-provider agentic chat
+#  tchat v3.5 — Multi-provider agentic chat
 #  Providers: OpenRouter, Gemini, Anthropic, OpenAI
+#  Auth: API keys, or existing Gemini/Claude/Codex CLI login
 #  deps: curl, jq  (pkg install curl jq)
 #  install: type /install inside the app
 # ─────────────────────────────────────────
 
-TCHAT_VERSION="3.0"
+TCHAT_VERSION="3.5"
 PROVIDER="${TCHAT_PROVIDER:-}"
+AUTH_MODE="${TCHAT_AUTH_MODE:-}"
 API_KEY=""
 MODEL=""
 SAVE_DIR="${HOME}/tchat-files"
@@ -16,6 +18,18 @@ CONFIG_DIR="${HOME}/.config/tchat"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 MEMORY_FILE="${CONFIG_DIR}/memory.json"
 MODELS_CACHE=""
+
+case "${1:-}" in
+  -v|--version) printf 'tchat %s\n' "$TCHAT_VERSION"; exit 0 ;;
+  -h|--help)
+    printf 'tchat %s — multi-provider terminal AI chat\n\n' "$TCHAT_VERSION"
+    printf 'Usage: tchat [--version|--help]\n\n'
+    printf 'Environment:\n'
+    printf '  TCHAT_PROVIDER   preselect provider (openrouter|gemini|anthropic|openai)\n'
+    printf '  TCHAT_AUTH_MODE  preselect connection (api|cli)\n\n'
+    printf 'Type /help inside the app for commands.\n'
+    exit 0 ;;
+esac
 
 mkdir -p "$SAVE_DIR" "$CONFIG_DIR"
 
@@ -54,6 +68,13 @@ CFG_DEFAULT_MODEL_OPENROUTER=""
 CFG_DEFAULT_MODEL_GEMINI=""
 CFG_DEFAULT_MODEL_ANTHROPIC=""
 CFG_DEFAULT_MODEL_OPENAI=""
+CFG_DEFAULT_CLI_GEMINI=""
+CFG_DEFAULT_CLI_ANTHROPIC=""
+CFG_DEFAULT_CLI_OPENAI=""
+CFG_AUTH_MODE_OPENROUTER="api"
+CFG_AUTH_MODE_GEMINI="api"
+CFG_AUTH_MODE_ANTHROPIC="api"
+CFG_AUTH_MODE_OPENAI="api"
 
 # ── CONFIG PERSISTENCE ───────────────────
 save_config() {
@@ -77,6 +98,13 @@ save_config() {
     --arg default_gemini "$CFG_DEFAULT_MODEL_GEMINI" \
     --arg default_anthropic "$CFG_DEFAULT_MODEL_ANTHROPIC" \
     --arg default_openai "$CFG_DEFAULT_MODEL_OPENAI" \
+    --arg default_cli_gemini "$CFG_DEFAULT_CLI_GEMINI" \
+    --arg default_cli_anthropic "$CFG_DEFAULT_CLI_ANTHROPIC" \
+    --arg default_cli_openai "$CFG_DEFAULT_CLI_OPENAI" \
+    --arg auth_openrouter "$CFG_AUTH_MODE_OPENROUTER" \
+    --arg auth_gemini "$CFG_AUTH_MODE_GEMINI" \
+    --arg auth_anthropic "$CFG_AUTH_MODE_ANTHROPIC" \
+    --arg auth_openai "$CFG_AUTH_MODE_OPENAI" \
     '{text_color:$text_color,user_color:$user_color,assistant_color:$assistant_color,
       tool_color:$tool_color,dim_color:$dim_color,error_color:$error_color,
       bg_color:$bg_color,bold_user:$bold_user,file_root:$file_root,
@@ -84,7 +112,11 @@ save_config() {
       command_preview:$command_preview,memory_enabled:$memory_enabled,
       max_output_tokens:$max_output_tokens,
       default_models:{openrouter:$default_openrouter,gemini:$default_gemini,
-        anthropic:$default_anthropic,openai:$default_openai}}' > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+        anthropic:$default_anthropic,openai:$default_openai},
+      default_cli_models:{gemini:$default_cli_gemini,
+        anthropic:$default_cli_anthropic,openai:$default_cli_openai},
+      auth_modes:{openrouter:$auth_openrouter,gemini:$auth_gemini,
+        anthropic:$auth_anthropic,openai:$auth_openai}}' > "$tmp" && mv "$tmp" "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
@@ -112,6 +144,13 @@ load_config() {
   CFG_DEFAULT_MODEL_GEMINI=$(jq -r '.default_models.gemini // ""' "$CONFIG_FILE")
   CFG_DEFAULT_MODEL_ANTHROPIC=$(jq -r '.default_models.anthropic // ""' "$CONFIG_FILE")
   CFG_DEFAULT_MODEL_OPENAI=$(jq -r '.default_models.openai // ""' "$CONFIG_FILE")
+  CFG_DEFAULT_CLI_GEMINI=$(jq -r '.default_cli_models.gemini // ""' "$CONFIG_FILE")
+  CFG_DEFAULT_CLI_ANTHROPIC=$(jq -r '.default_cli_models.anthropic // ""' "$CONFIG_FILE")
+  CFG_DEFAULT_CLI_OPENAI=$(jq -r '.default_cli_models.openai // ""' "$CONFIG_FILE")
+  CFG_AUTH_MODE_OPENROUTER=$(jq -r '.auth_modes.openrouter // "api"' "$CONFIG_FILE")
+  CFG_AUTH_MODE_GEMINI=$(jq -r '.auth_modes.gemini // "api"' "$CONFIG_FILE")
+  CFG_AUTH_MODE_ANTHROPIC=$(jq -r '.auth_modes.anthropic // "api"' "$CONFIG_FILE")
+  CFG_AUTH_MODE_OPENAI=$(jq -r '.auth_modes.openai // "api"' "$CONFIG_FILE")
 
   [[ "$CFG_FILE_ROOT" =~ ^(sdcard|termux)$ ]] || CFG_FILE_ROOT="sdcard"
   [[ "$CFG_FONT_STYLE" =~ ^(normal|bold|dim)$ ]] || CFG_FONT_STYLE="normal"
@@ -120,6 +159,29 @@ load_config() {
   [[ "$CFG_MAX_OUTPUT_TOKENS" =~ ^[0-9]+$ ]] || CFG_MAX_OUTPUT_TOKENS="2048"
   [ "$CFG_MAX_OUTPUT_TOKENS" -lt 128 ] && CFG_MAX_OUTPUT_TOKENS="128"
   [ "$CFG_MAX_OUTPUT_TOKENS" -gt 32768 ] && CFG_MAX_OUTPUT_TOKENS="32768"
+  [[ "$CFG_AUTH_MODE_OPENROUTER" =~ ^(api|cli)$ ]] || CFG_AUTH_MODE_OPENROUTER="api"
+  [[ "$CFG_AUTH_MODE_GEMINI" =~ ^(api|cli)$ ]] || CFG_AUTH_MODE_GEMINI="api"
+  [[ "$CFG_AUTH_MODE_ANTHROPIC" =~ ^(api|cli)$ ]] || CFG_AUTH_MODE_ANTHROPIC="api"
+  [[ "$CFG_AUTH_MODE_OPENAI" =~ ^(api|cli)$ ]] || CFG_AUTH_MODE_OPENAI="api"
+}
+
+get_saved_auth_mode() {
+  case "$PROVIDER" in
+    openrouter) printf '%s' "$CFG_AUTH_MODE_OPENROUTER" ;;
+    gemini)     printf '%s' "$CFG_AUTH_MODE_GEMINI" ;;
+    anthropic)  printf '%s' "$CFG_AUTH_MODE_ANTHROPIC" ;;
+    openai)     printf '%s' "$CFG_AUTH_MODE_OPENAI" ;;
+  esac
+}
+
+save_auth_mode() {
+  case "$PROVIDER" in
+    openrouter) CFG_AUTH_MODE_OPENROUTER="$AUTH_MODE" ;;
+    gemini)     CFG_AUTH_MODE_GEMINI="$AUTH_MODE" ;;
+    anthropic)  CFG_AUTH_MODE_ANTHROPIC="$AUTH_MODE" ;;
+    openai)     CFG_AUTH_MODE_OPENAI="$AUTH_MODE" ;;
+  esac
+  save_config
 }
 
 KEYS_FILE="${CONFIG_DIR}/keys.json"
@@ -141,6 +203,14 @@ get_key() {
 }
 
 get_saved_default_model() {
+  if [ "$AUTH_MODE" = "cli" ]; then
+    case "$PROVIDER" in
+      gemini)    printf '%s' "$CFG_DEFAULT_CLI_GEMINI" ;;
+      anthropic) printf '%s' "$CFG_DEFAULT_CLI_ANTHROPIC" ;;
+      openai)    printf '%s' "$CFG_DEFAULT_CLI_OPENAI" ;;
+    esac
+    return
+  fi
   case "$PROVIDER" in
     openrouter) printf '%s' "$CFG_DEFAULT_MODEL_OPENROUTER" ;;
     gemini)     printf '%s' "$CFG_DEFAULT_MODEL_GEMINI" ;;
@@ -151,6 +221,16 @@ get_saved_default_model() {
 
 save_current_model_as_default() {
   [ -z "$MODEL" ] && return 1
+  if [ "$AUTH_MODE" = "cli" ]; then
+    case "$PROVIDER" in
+      gemini)    CFG_DEFAULT_CLI_GEMINI="$MODEL" ;;
+      anthropic) CFG_DEFAULT_CLI_ANTHROPIC="$MODEL" ;;
+      openai)    CFG_DEFAULT_CLI_OPENAI="$MODEL" ;;
+      *) return 1 ;;
+    esac
+    save_config
+    return
+  fi
   case "$PROVIDER" in
     openrouter) CFG_DEFAULT_MODEL_OPENROUTER="$MODEL" ;;
     gemini)     CFG_DEFAULT_MODEL_GEMINI="$MODEL" ;;
@@ -161,6 +241,15 @@ save_current_model_as_default() {
 }
 
 clear_provider_default_model() {
+  if [ "$AUTH_MODE" = "cli" ]; then
+    case "$PROVIDER" in
+      gemini)    CFG_DEFAULT_CLI_GEMINI="" ;;
+      anthropic) CFG_DEFAULT_CLI_ANTHROPIC="" ;;
+      openai)    CFG_DEFAULT_CLI_OPENAI="" ;;
+    esac
+    save_config
+    return
+  fi
   case "$PROVIDER" in
     openrouter) CFG_DEFAULT_MODEL_OPENROUTER="" ;;
     gemini)     CFG_DEFAULT_MODEL_GEMINI="" ;;
@@ -310,18 +399,267 @@ set_provider_defaults() {
       API_URL="https://generativelanguage.googleapis.com/v1beta/models"
       MODELS_URL="https://generativelanguage.googleapis.com/v1beta/models"
       MODEL="$(get_saved_default_model)"
-      MODEL="${MODEL:-gemini-flash-latest}" ;;
+      if [ "$AUTH_MODE" = "cli" ]; then MODEL="${MODEL:-auto}"; else MODEL="${MODEL:-gemini-flash-latest}"; fi ;;
     anthropic)
       API_URL="https://api.anthropic.com/v1/messages"
       MODELS_URL="https://api.anthropic.com/v1/models"
       MODEL="$(get_saved_default_model)"
-      MODEL="${MODEL:-claude-3-5-sonnet-latest}" ;;
+      if [ "$AUTH_MODE" = "cli" ]; then MODEL="${MODEL:-sonnet}"; else MODEL="${MODEL:-claude-sonnet-4-5}"; fi ;;
     openai)
       API_URL="https://api.openai.com/v1/chat/completions"
       MODELS_URL="https://api.openai.com/v1/models"
       MODEL="$(get_saved_default_model)"
-      MODEL="${MODEL:-gpt-5-mini}" ;;
+      if [ "$AUTH_MODE" = "cli" ]; then MODEL="${MODEL:-default}"; else MODEL="${MODEL:-gpt-5-mini}"; fi ;;
   esac
+}
+
+cli_command() {
+  case "$PROVIDER" in
+    gemini) printf 'gemini' ;;
+    anthropic) printf 'claude' ;;
+    openai) printf 'codex' ;;
+  esac
+}
+
+cli_display_name() {
+  case "$PROVIDER" in
+    gemini) printf 'Gemini CLI' ;;
+    anthropic) printf 'Claude Code' ;;
+    openai) printf 'Codex CLI' ;;
+  esac
+}
+
+CLI_BACKEND=""
+CLI_NATIVE_ERROR=""
+
+is_termux() {
+  [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == */com.termux/* ]]
+}
+
+run_provider_cli() {
+  local -a clean_env
+  case "$PROVIDER" in
+    gemini) clean_env=(-u GEMINI_API_KEY -u GOOGLE_API_KEY) ;;
+    anthropic) clean_env=(-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN) ;;
+    openai) clean_env=(-u OPENAI_API_KEY -u CODEX_API_KEY) ;;
+  esac
+
+  if [ "$CLI_BACKEND" = "proot" ]; then
+    proot-distro login ubuntu -- env "${clean_env[@]}" \
+      PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
+  else
+    env "${clean_env[@]}" "$@"
+  fi
+}
+
+resolve_cli_backend() {
+  local cmd output code
+  cmd=$(cli_command)
+  CLI_BACKEND=""
+  CLI_NATIVE_ERROR=""
+  [ -z "$cmd" ] && return 1
+
+  # Codex's npm launcher may report a version successfully on Termux even
+  # though its Linux ARM64 executable cannot run on Android. Never select that
+  # native launcher: OpenAI account mode on Termux requires Ubuntu PRoot.
+  if is_termux && [ "$PROVIDER" = "openai" ]; then
+    CLI_NATIVE_ERROR="Native Codex is disabled on Termux because Android cannot load its Linux ARM64 executable."
+    if command -v proot-distro >/dev/null 2>&1; then
+      CLI_BACKEND="proot"
+      if proot-distro login ubuntu -- env \
+        PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin "$cmd" --version >/dev/null 2>&1; then
+        return 0
+      fi
+      CLI_BACKEND=""
+    fi
+    return 1
+  fi
+
+  if command -v "$cmd" >/dev/null 2>&1; then
+    CLI_BACKEND="native"
+    output=$(run_provider_cli "$cmd" --version 2>&1); code=$?
+    if [ "$code" -eq 0 ]; then return 0; fi
+    CLI_NATIVE_ERROR="$output"
+    CLI_BACKEND=""
+  fi
+
+  if is_termux && command -v proot-distro >/dev/null 2>&1; then
+    CLI_BACKEND="proot"
+    if proot-distro login ubuntu -- env \
+      PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin "$cmd" --version >/dev/null 2>&1; then
+      return 0
+    fi
+    CLI_BACKEND=""
+  fi
+  return 1
+}
+
+show_cli_install_help() {
+  printf "\n  ${C_ERR}✗ %s cannot run in the current environment.${R}\n" "$(cli_display_name)"
+  if is_termux; then
+    printf "  ${C_DIM}Native Android/Termux builds are unavailable or unreliable.${R}\n"
+    if [ "$PROVIDER" = "openai" ]; then
+      printf "  ${C_DIM}Native Codex is disabled here because Android cannot load its Linux ARM64 executable.${R}\n"
+    fi
+    printf "  ${C_DIM}Reliable fallback: install the CLI inside an Ubuntu PRoot container.${R}\n"
+    printf "  ${C_USER}pkg install proot-distro${R}\n"
+    printf "  ${C_USER}proot-distro install ubuntu${R}\n"
+    printf "  ${C_USER}proot-distro login ubuntu${R}\n"
+    printf "  ${C_DIM}Then, inside Ubuntu:${R}\n"
+    case "$PROVIDER" in
+      gemini) printf "  ${C_USER}apt update && apt install -y nodejs npm && npm install -g @google/gemini-cli${R}\n" ;;
+      anthropic) printf "  ${C_USER}apt update && apt install -y curl ca-certificates && curl -fsSL https://claude.ai/install.sh | bash${R}\n" ;;
+      openai) printf "  ${C_USER}apt update && apt install -y curl ca-certificates && curl -fsSL https://chatgpt.com/codex/install.sh | sh${R}\n" ;;
+    esac
+    printf "  ${C_DIM}Exit Ubuntu, then choose account login again.${R}\n\n"
+    return
+  fi
+  printf "  ${C_DIM}Install it, sign in, then choose account login again.${R}\n"
+  case "$PROVIDER" in
+    gemini) printf "  ${C_USER}npm install -g @google/gemini-cli${R}\n" ;;
+    anthropic) printf "  ${C_USER}curl -fsSL https://claude.ai/install.sh | bash${R}\n" ;;
+    openai) printf "  ${C_USER}curl -fsSL https://chatgpt.com/codex/install.sh | sh${R}\n" ;;
+  esac
+  printf "\n"
+}
+
+ensure_cli_available() {
+  if ! resolve_cli_backend; then
+    [ "${1:-}" = "quiet" ] || show_cli_install_help
+    return 1
+  fi
+}
+
+setup_termux_openai_backend() {
+  local confirm
+  printf "\n  ${BOLD}${C_TOOL}OpenAI account login needs a small Linux compatibility environment.${R}\n"
+  printf "  ${C_DIM}tchat can install and manage it inside Termux automatically.${R}\n"
+  printf "  ${C_DIM}This downloads Ubuntu and Codex, so it may take several minutes.${R}\n"
+  printf "  ${C_USER}Set it up now? [Y/n]: ${R}"
+  read -r confirm
+  [[ "$confirm" =~ ^[Nn] ]] && return 1
+
+  if ! command -v pkg >/dev/null 2>&1; then
+    printf "\n  ${C_ERR}✗ Termux's pkg command was not found.${R}\n\n"
+    return 1
+  fi
+
+  printf "\n  ${C_DIM}Installing the compatibility tools...${R}\n"
+  if ! pkg install -y proot-distro; then
+    printf "\n  ${C_ERR}✗ Could not install proot-distro.${R}\n\n"
+    return 1
+  fi
+
+  if ! proot-distro login ubuntu -- true >/dev/null 2>&1; then
+    printf "\n  ${C_DIM}Downloading the Ubuntu environment...${R}\n"
+    if ! proot-distro install ubuntu; then
+      printf "\n  ${C_ERR}✗ Could not install the Ubuntu environment.${R}\n\n"
+      return 1
+    fi
+  fi
+
+  printf "\n  ${C_DIM}Installing Codex inside the compatibility environment...${R}\n"
+  if ! proot-distro login ubuntu -- bash -c '
+    set -e
+    export PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+    if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then
+      exit 0
+    fi
+    apt-get update
+    apt-get install -y curl ca-certificates
+    curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
+    codex --version >/dev/null
+  '; then
+    printf "\n  ${C_ERR}✗ Codex installation did not finish successfully.${R}\n"
+    printf "  ${C_DIM}Check your connection and choose account login to retry.${R}\n\n"
+    return 1
+  fi
+
+  if resolve_cli_backend; then
+    printf "\n  ${C_ASST}✓ OpenAI account support is ready.${R}\n\n"
+    return 0
+  fi
+  printf "\n  ${C_ERR}✗ Codex was installed but tchat could not start it.${R}\n\n"
+  return 1
+}
+
+login_cli() {
+  ensure_cli_available || return 1
+  printf "\n  ${BOLD}${C_TOOL}Opening %s sign-in...${R}\n" "$(cli_display_name)"
+  printf "  ${C_DIM}Complete the browser flow, then return here.${R}\n\n"
+  case "$PROVIDER" in
+    gemini)
+      printf "  ${C_DIM}Gemini opens its normal setup screen. Sign in, then type /quit.${R}\n"
+      run_provider_cli gemini ;;
+    anthropic)
+      run_provider_cli claude auth login ;;
+    openai)
+      if is_termux; then run_provider_cli codex login --device-auth
+      else run_provider_cli codex login; fi ;;
+  esac
+  local code=$?
+  if [ "$code" -eq 0 ]; then
+    printf "\n  ${C_ASST}✓ Sign-in command finished.${R}\n\n"
+  else
+    printf "\n  ${C_ERR}✗ Sign-in exited with code %s.${R}\n\n" "$code"
+  fi
+  return "$code"
+}
+
+configure_api_key() {
+  local force_new="${1:-false}" saved use
+  saved=$(get_key "$PROVIDER")
+  if [ "$force_new" != "true" ] && [ -n "$saved" ]; then
+    printf "\n  ${C_DIM}Found saved key for %s. Use it? [Y/n]: ${R}" "$PROVIDER"; read -r use
+    use=$(echo "$use" | tr -d '[:space:]')
+    if [[ ! "$use" =~ ^[Nn] ]]; then
+      API_KEY="$saved"; printf "  ${C_DIM}✓ Key loaded.${R}\n\n"; return 0
+    fi
+  fi
+  printf "\n  ${C_USER}API key for %s: ${R}" "$PROVIDER"
+  read -r -s API_KEY; echo ""
+  if [ -z "$API_KEY" ]; then printf "  ${C_ERR}✗ No key entered.${R}\n"; return 1; fi
+  save_key "$PROVIDER" "$API_KEY"
+  printf "  ${C_DIM}✓ Key saved.${R}\n\n"
+}
+
+choose_auth_mode() {
+  API_KEY=""
+  if [ "$PROVIDER" = "openrouter" ]; then
+    AUTH_MODE="api"
+    save_auth_mode
+    configure_api_key
+    return $?
+  fi
+
+  local saved pick signin
+  saved=$(get_saved_auth_mode)
+  while true; do
+    printf "\n  ${BOLD}Connect %s with:${R}\n\n" "$PROVIDER"
+    printf "  ${C_USER}1)${R} Account login  ${C_DIM}(%s; no API key)${R}\n" "$(cli_display_name)"
+    printf "  ${C_USER}2)${R} API key\n"
+    printf "  ${C_DIM}Pick [1-2, Enter=%s]: ${R}" "$saved"
+    read -r pick
+    pick=$(echo "$pick" | tr -d '[:space:]')
+    [ -z "$pick" ] && { [ "$saved" = "cli" ] && pick=1 || pick=2; }
+    case "$pick" in
+      1)
+        AUTH_MODE="cli"
+        if ensure_cli_available quiet || \
+          { is_termux && [ "$PROVIDER" = "openai" ] && setup_termux_openai_backend; }; then
+          save_auth_mode
+          printf "  ${C_DIM}Sign in or switch accounts now? [y/N]: ${R}"; read -r signin
+          [[ "$signin" =~ ^[Yy] ]] && login_cli
+          return 0
+        else
+          show_cli_install_help
+        fi ;;
+      2)
+        AUTH_MODE="api"
+        if configure_api_key; then save_auth_mode; return 0; fi ;;
+      *) printf "  ${C_ERR}✗ Pick 1 or 2.${R}\n" ;;
+    esac
+  done
 }
 
 select_automatic_model() {
@@ -329,6 +667,15 @@ select_automatic_model() {
   saved=$(get_saved_default_model)
   if [ -n "$saved" ]; then
     MODEL="$saved"
+    return
+  fi
+
+  if [ "$AUTH_MODE" = "cli" ]; then
+    case "$PROVIDER" in
+      gemini) MODEL="auto" ;;
+      anthropic) MODEL="sonnet" ;;
+      openai) MODEL="default" ;;
+    esac
     return
   fi
 
@@ -343,6 +690,11 @@ select_automatic_model() {
         | grep -Ei '^gemini-.*flash' \
         | grep -Eiv '(lite|image|live|tts|preview)' \
         | sort -V | tail -1)
+      [ -n "$candidate" ] && MODEL="$candidate" ;;
+    anthropic)
+      # Prefer the newest Sonnet, then any newest Claude model.
+      candidate=$(printf '%s\n' "$MODELS_CACHE" | grep -E '^claude-sonnet-' | sort -V | tail -1)
+      [ -z "$candidate" ] && candidate=$(printf '%s\n' "$MODELS_CACHE" | grep -E '^claude-' | sort -V | tail -1)
       [ -n "$candidate" ] && MODEL="$candidate" ;;
     openai)
       for candidate in gpt-5-mini gpt-4.1-mini gpt-4o-mini; do
@@ -414,9 +766,9 @@ choose_provider() {
     printf "  ╚$(tc 180 180 180)═══════════════════════════════${R}╝\n\n"
     printf "  ${BOLD}Choose provider:${R}\n\n"
     printf "  ${C_USER}1)${R} OpenRouter  ${C_DIM}(many providers)${R}\n"
-    printf "  ${C_USER}2)${R} Gemini      ${C_DIM}(Google AI Studio)${R}\n"
-    printf "  ${C_USER}3)${R} Anthropic   ${C_DIM}(Claude API)${R}\n"
-    printf "  ${C_USER}4)${R} OpenAI      ${C_DIM}(OpenAI Platform API)${R}\n\n"
+    printf "  ${C_USER}2)${R} Gemini      ${C_DIM}(Google account or API)${R}\n"
+    printf "  ${C_USER}3)${R} Anthropic   ${C_DIM}(Claude account or API)${R}\n"
+    printf "  ${C_USER}4)${R} OpenAI      ${C_DIM}(ChatGPT account or API)${R}\n\n"
     printf "  ${C_DIM}Pick [1-4]: ${R}"
     read -r pick
     pick=$(echo "$pick" | tr -d '[:space:]')
@@ -429,20 +781,8 @@ choose_provider() {
     esac
   done
 
+  choose_auth_mode || exit 1
   set_provider_defaults
-  local saved; saved=$(get_key "$PROVIDER")
-  if [ -n "$saved" ]; then
-    printf "\n  ${C_DIM}Found saved key for %s. Use it? [Y/n]: ${R}" "$PROVIDER"; read -r use
-    use=$(echo "$use" | tr -d '[:space:]')
-    if [[ ! "$use" =~ ^[Nn] ]]; then
-      API_KEY="$saved"; printf "  ${C_DIM}✓ Key loaded.${R}\n\n"; return
-    fi
-  fi
-  printf "\n  ${C_USER}API key for %s: ${R}" "$PROVIDER"
-  read -r -s API_KEY; echo ""
-  [ -z "$API_KEY" ] && printf "${C_ERR}✗ No key.${R}\n" && exit 1
-  save_key "$PROVIDER" "$API_KEY"
-  printf "  ${C_DIM}✓ Key saved.${R}\n\n"
 }
 
 # ── HEADER ───────────────────────────────
@@ -457,6 +797,15 @@ print_header() {
     openrouter) printf "  $(tc 200 200 200)Model: %s${R}\n" "$MODEL" ;;
     openai)     printf "  $(tc 116 170 156)Model: %s${R}\n" "$MODEL" ;;
   esac
+  if [ "$AUTH_MODE" = "cli" ]; then
+    if [ "$CLI_BACKEND" = "proot" ]; then
+      printf "  ${C_DIM}Connection: %s account (Ubuntu PRoot)${R}\n" "$(cli_display_name)"
+    else
+      printf "  ${C_DIM}Connection: %s account${R}\n" "$(cli_display_name)"
+    fi
+  else
+    printf "  ${C_DIM}Connection: API key${R}\n"
+  fi
   printf "  ${C_DIM}/q quit  /s search  /settings  /switch  /help${R}\n"
   [ "$CFG_COMMAND_PREVIEW" = "true" ] && printf "  ${C_DIM}Type / for commands; Tab or → accepts the preview${R}\n"
   printf "  ${C_DIM}────────────────────────────────────${R}\n\n"
@@ -464,6 +813,12 @@ print_header() {
 
 # ── PROVIDER CREDIT BALANCE ──────────────
 check_balance() {
+  if [ "$AUTH_MODE" = "cli" ]; then
+    printf "\n  ${BOLD}${C_TOOL}%s account usage${R}\n" "$(cli_display_name)"
+    printf "  ${C_DIM}tchat cannot read subscription limits from this CLI's stable headless interface.${R}\n"
+    printf "  ${C_DIM}Use the provider's account/usage page or its interactive CLI status command.${R}\n\n"
+    return
+  fi
   printf "\n  ${BOLD}${C_TOOL}Checking API Balance...${R}\n"
   case "$PROVIDER" in
     openrouter)
@@ -510,7 +865,28 @@ check_balance() {
 }
 
 # ── MODEL FETCH ──────────────────────────
+fetch_cli_models() {
+  local raw=""
+  case "$PROVIDER" in
+    gemini)
+      MODELS_CACHE=$'auto\npro\nflash\nflash-lite' ;;
+    anthropic)
+      MODELS_CACHE=$'sonnet\nopus\nhaiku\nfable' ;;
+    openai)
+      raw=$(run_provider_cli codex debug models 2>/dev/null || true)
+      MODELS_CACHE=$(jq -r '[.models[]? | (.slug // .model // .id // empty)] | unique | .[]' <<< "$raw" 2>/dev/null)
+      MODELS_CACHE=$(printf 'default\n%s\n' "$MODELS_CACHE" | sed '/^$/d' | sort -u) ;;
+  esac
+  select_automatic_model
+  local count; count=$(printf '%s\n' "$MODELS_CACHE" | sed '/^$/d' | wc -l | tr -d ' ')
+  printf "  ${C_DIM}Loaded ${C_USER}%s${R}${C_DIM} CLI model choices. Using ${C_USER}%s${R}${C_DIM}.${R}\n\n" "$count" "$MODEL"
+}
+
 fetch_models() {
+  if [ "$AUTH_MODE" = "cli" ]; then
+    fetch_cli_models
+    return
+  fi
   printf "  ${C_DIM}Fetching models...${R}\n"
   local response err
   MODELS_CACHE=""
@@ -543,7 +919,7 @@ fetch_models() {
       done
       MODELS_CACHE=$(printf '%s' "$models" | sed '/^$/d' | sort -u) ;;
     anthropic)
-      response=$(curl -sS --connect-timeout 15 --max-time 90 "$MODELS_URL" \
+      response=$(curl -sS --connect-timeout 15 --max-time 90 "${MODELS_URL}?limit=1000" \
         -H "x-api-key: $API_KEY" -H "anthropic-version: 2023-06-01" 2>&1)
       MODELS_CACHE=$(jq -r '[.data[]?|.id]|sort|.[]' <<< "$response" 2>/dev/null) ;;
     openai)
@@ -698,6 +1074,7 @@ open_settings() {
     printf "  ${C_USER}12)${R} Max output       ${C_DIM}%s tokens${R}\n" "$CFG_MAX_OUTPUT_TOKENS"
     printf "  ${C_USER}13)${R} Default model    ${C_DIM}%s${R}\n" "${default_label:-automatic}"
     printf "  ${C_USER}14)${R} Custom prompt    ${C_DIM}%s${R}\n" "${CFG_CUSTOM_PROMPT:-(none)}"
+    printf "  ${C_DIM}    Connection       %s (change with /auth)${R}\n" "$AUTH_MODE"
 
     printf "\n  ${BOLD}Misc${R}\n"
     printf "  ${C_USER}15)${R} Preview colors\n"
@@ -754,6 +1131,9 @@ open_settings() {
           CFG_FONT_STYLE="normal"; CFG_COMMAND_PREVIEW="true"; CFG_MEMORY_ENABLED="false"
           CFG_MAX_OUTPUT_TOKENS="2048"; CFG_DEFAULT_MODEL_OPENROUTER=""; CFG_DEFAULT_MODEL_GEMINI=""
           CFG_DEFAULT_MODEL_ANTHROPIC=""; CFG_DEFAULT_MODEL_OPENAI=""
+          CFG_DEFAULT_CLI_GEMINI=""; CFG_DEFAULT_CLI_ANTHROPIC=""; CFG_DEFAULT_CLI_OPENAI=""
+          CFG_AUTH_MODE_OPENROUTER="api"; CFG_AUTH_MODE_GEMINI="api"
+          CFG_AUTH_MODE_ANTHROPIC="api"; CFG_AUTH_MODE_OPENAI="api"
           apply_colors; save_config; select_automatic_model
         fi ;;
       0|/settings) break ;;
@@ -778,6 +1158,16 @@ TOOL RULES (internal, never mention these):
   if [ "$CFG_MEMORY_ENABLED" = "true" ]; then
     local mem; mem=$(memory_context)
     printf '%s\n' "MEMORY RULES: Use saved user memory quietly. Call memory_add only for stable, useful, non-sensitive facts or preferences, especially when the user explicitly asks you to remember. Keep each fact short. Never store passwords, API keys, financial credentials, exact addresses, or temporary details. Call memory_forget when the user asks you to forget something."
+    [ -n "$mem" ] && printf 'SAVED USER MEMORY:\n%s\n' "$mem"
+  fi
+  [ -n "$CFG_CUSTOM_PROMPT" ] && printf 'Additional instructions: %s\n' "$CFG_CUSTOM_PROMPT"
+}
+
+build_cli_system_prompt() {
+  local base="You are a helpful AI assistant connected to tchat through the provider's account CLI. Respond naturally and do not introduce yourself or discuss the connection method. This headless connection is read-only: you may inspect available local context when useful, but do not modify files or perform destructive actions. Be concise."
+  printf '%s\n' "$base"
+  if [ "$CFG_MEMORY_ENABLED" = "true" ]; then
+    local mem; mem=$(memory_context)
     [ -n "$mem" ] && printf 'SAVED USER MEMORY:\n%s\n' "$mem"
   fi
   [ -n "$CFG_CUSTOM_PROMPT" ] && printf 'Additional instructions: %s\n' "$CFG_CUSTOM_PROMPT"
@@ -820,16 +1210,30 @@ run_tool() {
   local name="$1" args="$2"
   case "$name" in
     write_file)
-      local path content
+      local path overwrite
       path=$(echo "$args" | jq -r '.path//empty')
-      content=$(echo "$args" | jq -r '.content//empty')
       if [ -z "$path" ] || [ "$path" = "null" ]; then
         echo "ERROR: Missing path argument."
         return
       fi
       path="${path/#\~/$HOME}"
-      mkdir -p "$(dirname "$path")"
-      printf "%s" "$content" > "$path"
+      if [ -e "$path" ]; then
+        printf "\n  ${BOLD}${C_USER}⚠ Overwrite existing file:${R} %s\n" "$path" >&2
+        printf "  ${BOLD}Allow? [Y/n]: ${R}" >&2; read -r overwrite < /dev/tty
+        if [[ "$overwrite" =~ ^[[:space:]]*[Nn] ]]; then
+          printf "  ${C_ERR}✗ Blocked by user.${R}\n" >&2; echo "Blocked by user: file was not overwritten."
+          return
+        fi
+      fi
+      if ! mkdir -p "$(dirname "$path")" 2>/dev/null; then
+        printf "  ${C_ERR}✗ Cannot create folder for: %s${R}\n" "$path" >&2
+        echo "ERROR: Cannot create parent directory for $path"; return
+      fi
+      # Write straight from jq so trailing newlines in the content are kept.
+      if ! echo "$args" | jq -j '.content//""' > "$path" 2>/dev/null; then
+        printf "  ${C_ERR}✗ Cannot write: %s${R}\n" "$path" >&2
+        echo "ERROR: Cannot write $path"; return
+      fi
       printf "  ${C_ASST}✓ write_file:${R} %s\n" "$path" >&2
       echo "File written successfully: $path" ;;
     read_file)
@@ -920,35 +1324,40 @@ print_wrapped_text() {
 
 # ── HISTORY ──────────────────────────────
 HISTORY="[]"
+TOOL_RESULT_LIMIT=20000
 
 # ── API CALLS ────────────────────────────
 call_openrouter() {
   local sys tools body; sys=$(build_system_prompt); tools=$(get_tools)
-  body=$(jq -n \
+  # History and request bodies go through stdin: long chats exceed the
+  # per-argument size limit (~128 KB) if passed on the command line.
+  body=$(jq -c \
     --arg model "$MODEL" --arg system "$sys" --argjson max "$CFG_MAX_OUTPUT_TOKENS" \
-    --argjson messages "$HISTORY" --argjson tools "$tools" \
-    '{model:$model,messages:([{"role":"system","content":$system}]+$messages),tools:$tools,max_tokens:$max,stream:false}')
-  curl -sS --connect-timeout 15 --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d "$body"
+    --argjson tools "$tools" \
+    '{model:$model,messages:([{"role":"system","content":$system}]+.),tools:$tools,max_tokens:$max,stream:false}' <<< "$HISTORY")
+  curl -sS --connect-timeout 15 --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" --data-binary @- <<< "$body"
 }
 
 call_openai() {
   local sys tools body response fallback; sys=$(build_system_prompt); tools=$(get_tools)
-  body=$(jq -n \
+  body=$(jq -c \
     --arg model "$MODEL" --arg system "$sys" --argjson max "$CFG_MAX_OUTPUT_TOKENS" \
-    --argjson messages "$HISTORY" --argjson tools "$tools" \
-    '{model:$model,messages:([{"role":"system","content":$system}]+$messages),tools:$tools,max_completion_tokens:$max,stream:false}')
-  response=$(curl -sS --connect-timeout 15 --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d "$body")
+    --argjson tools "$tools" \
+    '{model:$model,messages:([{"role":"system","content":$system}]+.),tools:$tools,max_completion_tokens:$max,stream:false}' <<< "$HISTORY")
+  response=$(curl -sS --connect-timeout 15 --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" --data-binary @- <<< "$body")
   if jq -e '.error.param=="max_completion_tokens" or (.error.message? // "" | test("max_completion_tokens.*unsupported|unknown.*max_completion_tokens";"i"))' >/dev/null 2>&1 <<< "$response"; then
     fallback=$(jq --argjson max "$CFG_MAX_OUTPUT_TOKENS" 'del(.max_completion_tokens) + {max_tokens:$max}' <<< "$body")
-    response=$(curl -sS --connect-timeout 15 --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d "$fallback")
+    response=$(curl -sS --connect-timeout 15 --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" --data-binary @- <<< "$fallback")
   fi
   printf '%s' "$response"
 }
 
 call_gemini() {
   local url="${API_URL}/${MODEL}:generateContent"
-  local sys tools contents funcs body; sys=$(build_system_prompt); tools=$(get_tools)
-  contents=$(echo "$HISTORY" | jq '[.[]|{
+  local sys tools funcs body; sys=$(build_system_prompt); tools=$(get_tools)
+  funcs=$(echo "$tools" | jq -c '[.[]|{name:.function.name,description:.function.description,parameters:.function.parameters}]')
+  body=$(jq -c --arg sys "$sys" --argjson max "$CFG_MAX_OUTPUT_TOKENS" --argjson funcs "$funcs" '
+  [.[]|{
     role:(if .role=="assistant" then "model" elif .role=="tool" then "user" else .role end),
     parts:(if .role=="tool" then
       [{"functionResponse":{"name":(.name//"tool"),"response":{"content":.content}}}]
@@ -956,30 +1365,122 @@ call_gemini() {
     elif ((.tool_calls//[])|length)>0 then
       [.tool_calls[]|{"functionCall":{"name":.function.name,"args":(.function.arguments|fromjson)}}]
     else [{"text":(.content//"")}] end)
-  }]')
-  funcs=$(echo "$tools" | jq '[.[]|{name:.function.name,description:.function.description,parameters:.function.parameters}]')
-  body=$(jq -n \
-    --arg sys "$sys" --argjson max "$CFG_MAX_OUTPUT_TOKENS" \
-    --argjson contents "$contents" --argjson funcs "$funcs" \
-    '{systemInstruction:{parts:[{text:$sys}]},contents:$contents,tools:[{functionDeclarations:$funcs}],generationConfig:{maxOutputTokens:$max}}')
-  curl -sS --connect-timeout 15 --max-time 180 "$url" -H "x-goog-api-key: $API_KEY" -H "Content-Type: application/json" -d "$body"
+  }] as $contents
+  | {systemInstruction:{parts:[{text:$sys}]},contents:$contents,tools:[{functionDeclarations:$funcs}],generationConfig:{maxOutputTokens:$max}}' <<< "$HISTORY")
+  curl -sS --connect-timeout 15 --max-time 180 "$url" -H "x-goog-api-key: $API_KEY" -H "Content-Type: application/json" --data-binary @- <<< "$body"
 }
 
 call_anthropic() {
-  local sys tools msgs body; sys=$(build_system_prompt); tools=$(get_anthropic_tools)
-  msgs=$(echo "$HISTORY" | jq '[.[]|select(.role!="system")|{
+  local sys tools body; sys=$(build_system_prompt); tools=$(get_anthropic_tools)
+  body=$(jq -c --arg model "$MODEL" --arg sys "$sys" --argjson max "$CFG_MAX_OUTPUT_TOKENS" --argjson tools "$tools" '
+  [.[]|select(.role!="system")|{
     role:(if .role=="tool" then "user" else .role end),
     content:(if .role=="tool" then
       [{"type":"tool_result","tool_use_id":.tool_call_id,"content":.content}]
     elif (.raw_content!=null) then .raw_content
     else (.content//"") end)
-  }]')
-  body=$(jq -n \
-    --arg model "$MODEL" --arg sys "$sys" --argjson max "$CFG_MAX_OUTPUT_TOKENS" \
-    --argjson messages "$msgs" --argjson tools "$tools" \
-    '{model:$model,max_tokens:$max,system:$sys,messages:$messages,tools:$tools}')
+  }] as $messages
+  | {model:$model,max_tokens:$max,system:$sys,messages:$messages,tools:$tools}' <<< "$HISTORY")
   curl -sS --connect-timeout 15 --max-time 180 "$API_URL" \
-    -H "x-api-key: $API_KEY" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" -d "$body"
+    -H "x-api-key: $API_KEY" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" --data-binary @- <<< "$body"
+}
+
+# ── ACCOUNT CLI CALLS ───────────────────
+CLI_LAST_ERROR=""
+CLI_RESULT=""
+
+build_cli_transcript() {
+  local transcript
+  transcript=$(jq -r '
+    [.[] | select(.role=="user" or .role=="assistant")
+      | (if .role=="user" then "USER" else "ASSISTANT" end) + ":\n" + (.content//"")]
+    | join("\n\n")' <<< "$HISTORY" 2>/dev/null)
+  if [ "${#transcript}" -gt 60000 ]; then transcript="${transcript: -60000}"; fi
+  printf '%s' "$transcript"
+}
+
+call_provider_cli() {
+  CLI_RESULT=""
+  resolve_cli_backend || { CLI_LAST_ERROR="$(cli_display_name) cannot run here. Use /auth to select API mode or configure the Ubuntu PRoot fallback."; return 127; }
+  local transcript sys output code err_file err_text parsed
+  transcript=$(build_cli_transcript)
+  sys=$(build_cli_system_prompt)
+  err_file=$(mktemp "${TMPDIR:-$CONFIG_DIR}/tchat-cli.XXXXXX") || { CLI_LAST_ERROR="Could not create a temporary error log."; return 1; }
+
+  case "$PROVIDER" in
+    gemini)
+      local -a gemini_args
+      gemini_args=(-p "${sys}"$'\n\nConversation so far:\n'"${transcript}" --output-format json --approval-mode plan)
+      [ "$MODEL" != "default" ] && gemini_args+=(--model "$MODEL")
+      output=$(run_provider_cli gemini "${gemini_args[@]}" 2>"$err_file"); code=$?
+      if jq -e . >/dev/null 2>&1 <<< "$output"; then
+        parsed=$(jq -r '.response // empty' <<< "$output")
+        [ -z "$parsed" ] && CLI_LAST_ERROR=$(jq -r '.error.message // .error // "Gemini CLI returned no response."' <<< "$output")
+      else
+        CLI_LAST_ERROR="Gemini CLI returned invalid JSON."
+      fi ;;
+    anthropic)
+      local -a claude_args
+      claude_args=(-p "$transcript" --output-format json --permission-mode plan --no-session-persistence --append-system-prompt "$sys")
+      [ "$MODEL" != "default" ] && claude_args+=(--model "$MODEL")
+      output=$(run_provider_cli claude "${claude_args[@]}" 2>"$err_file"); code=$?
+      if jq -e . >/dev/null 2>&1 <<< "$output"; then
+        parsed=$(jq -r '.result // empty' <<< "$output")
+        [ -z "$parsed" ] && CLI_LAST_ERROR=$(jq -r '.error.message // .error // "Claude Code returned no response."' <<< "$output")
+      else
+        CLI_LAST_ERROR="Claude Code returned invalid JSON."
+      fi ;;
+    openai)
+      local -a codex_args
+      codex_args=(exec --ephemeral --sandbox read-only --skip-git-repo-check --color never)
+      [ "$MODEL" != "default" ] && codex_args+=(--model "$MODEL")
+      codex_args+=("${sys}"$'\n\nConversation so far:\n'"${transcript}")
+      output=$(run_provider_cli codex "${codex_args[@]}" 2>"$err_file"); code=$?
+      parsed="$output"
+      [ -z "$parsed" ] && CLI_LAST_ERROR="Codex CLI returned no response." ;;
+  esac
+
+  err_text=$(tail -c 3000 "$err_file" 2>/dev/null)
+  rm -f "$err_file"
+  if [ "$code" -ne 0 ]; then
+    CLI_LAST_ERROR="${err_text:-${CLI_LAST_ERROR:-$(cli_display_name) exited with code $code.}}"
+    return "$code"
+  fi
+  if [ -z "$parsed" ]; then
+    [ -z "$CLI_LAST_ERROR" ] && CLI_LAST_ERROR="${err_text:-$(cli_display_name) returned an empty response.}"
+    return 1
+  fi
+  CLI_LAST_ERROR=""
+  CLI_RESULT="$parsed"
+}
+
+print_assistant_response() {
+  local text_content="$1" clean
+  printf "\n  ${BOLD}${C_ASST}◆ Assistant${R}\n"
+  clean=$(printf '%s\n' "$text_content" \
+    | sed 's/\*\*\([^*]*\)\*\*/\1/g' \
+    | sed "s/\*\([^*]*\)\*/\1/g" \
+    | sed 's/^### */  /g' \
+    | sed 's/^## */  /g' \
+    | sed 's/^# */  /g' \
+    | sed 's/^```[a-z]*/  ─────/g' \
+    | sed 's/^```/  ─────/g' \
+    | sed 's/`\([^`]*\)`/\1/g')
+  printf "${C_FONT}${C_TEXT}"
+  print_wrapped_text "$clean"
+  printf "${R}\n"
+}
+
+finish_cli_message() {
+  local text_content
+  if ! call_provider_cli; then
+    printf "\n  ${C_ERR}✗ %s${R}\n" "$CLI_LAST_ERROR"
+    printf "  ${C_DIM}If this is an authentication error, run /login.${R}\n\n"
+    return
+  fi
+  text_content="$CLI_RESULT"
+  HISTORY=$(printf '%s' "$text_content" | jq -Rs --slurpfile hist <(printf '%s' "$HISTORY") '$hist[0] + [{"role":"assistant","content":.}]')
+  print_assistant_response "$text_content"
 }
 
 # ── AGENTIC LOOP ─────────────────────────
@@ -995,6 +1496,11 @@ send_message() {
       .[-40:]
       | (map(.role == "user") | index(true)) as $first_user
       | if $first_user == null then [] else .[$first_user:] end')
+  fi
+
+  if [ "$AUTH_MODE" = "cli" ]; then
+    finish_cli_message
+    return
   fi
 
   while true; do
@@ -1028,40 +1534,28 @@ send_message() {
         text_content=$(echo "$response" | jq -r '.choices[0].message.content//""')
         tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls//[]')
         tool_count=$(echo "$tool_calls" | jq 'length')
-        HISTORY=$(echo "$HISTORY" | jq --argjson m "$(echo "$response"|jq -c '.choices[0].message')" '. + [$m]') ;;
+        HISTORY=$(printf '%s\n%s' "$HISTORY" "$response" | jq -cs '.[0] + [.[1].choices[0].message]') ;;
       gemini)
         text_content=$(echo "$response" | jq -r '[.candidates[0].content.parts[]?|select(.text?)|.text]|join("")' 2>/dev/null)
         tool_calls=$(echo "$response" | jq -c '[.candidates[0].content.parts[]?|select(.functionCall?)|{"id":("call_"+.functionCall.name),"function":{"name":.functionCall.name,"arguments":(.functionCall.args|tostring)}}]' 2>/dev/null)
         tool_calls="${tool_calls:-[]}"; tool_count=$(echo "$tool_calls" | jq 'length')
-        local parts; parts=$(echo "$response" | jq -c '.candidates[0].content.parts')
-        HISTORY=$(echo "$HISTORY" | jq \
-          --arg t "$text_content" --argjson tc "$tool_calls" --argjson p "$parts" \
-          '. + [{"role":"assistant","content":$t,"tool_calls":$tc,"gemini_parts":$p}]') ;;
+        HISTORY=$(printf '%s\n%s\n%s' "$HISTORY" "$response" "$tool_calls" | jq -cs '
+          .[0] + [{"role":"assistant",
+            "content":([.[1].candidates[0].content.parts[]?|select(.text?)|.text]|join("")),
+            "tool_calls":.[2],"gemini_parts":.[1].candidates[0].content.parts}]') ;;
       anthropic)
         text_content=$(echo "$response" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
         tool_calls=$(echo "$response" | jq -c '[.content[]?|select(.type=="tool_use")|{"id":.id,"function":{"name":.name,"arguments":(.input|tostring)}}]' 2>/dev/null)
         tool_calls="${tool_calls:-[]}"; tool_count=$(echo "$tool_calls" | jq 'length')
-        local raw; raw=$(echo "$response" | jq '[.content[]?|select((.type=="text" and .text!="") or .type=="tool_use")]')
-        HISTORY=$(echo "$HISTORY" | jq \
-          --arg text "$text_content" --argjson tc "$tool_calls" --argjson raw "$raw" \
-          '. + [{"role":"assistant","content":$text,"raw_content":$raw,"tool_calls":$tc}]') ;;
+        HISTORY=$(printf '%s\n%s\n%s' "$HISTORY" "$response" "$tool_calls" | jq -cs '
+          .[0] + [{"role":"assistant",
+            "content":([.[1].content[]?|select(.type=="text")|.text]|join("")),
+            "raw_content":[.[1].content[]?|select((.type=="text" and .text!="") or .type=="tool_use")],
+            "tool_calls":.[2]}]') ;;
     esac
 
     if [ -n "$text_content" ] && [ "$text_content" != "null" ] && [ "$text_content" != "" ]; then
-      printf "\n  ${BOLD}${C_ASST}◆ Assistant${R}\n"
-      local clean
-      clean=$(printf '%s\n' "$text_content" \
-        | sed 's/\*\*\([^*]*\)\*\*/\1/g' \
-        | sed "s/\*\([^*]*\)\*/\1/g" \
-        | sed 's/^### */  /g' \
-        | sed 's/^## */  /g' \
-        | sed 's/^# */  /g' \
-        | sed 's/^```[a-z]*/  ─────/g' \
-        | sed 's/^```/  ─────/g' \
-        | sed 's/`\([^`]*\)`/\1/g')
-      printf "${C_FONT}${C_TEXT}"
-      print_wrapped_text "$clean"
-      printf "${R}\n"
+      print_assistant_response "$text_content"
     fi
 
     [ "$tool_count" -eq 0 ] && break
@@ -1075,9 +1569,13 @@ send_message() {
       targs=$(echo "$t_call" | jq -r '.function.arguments')
       printf "  ${BOLD}${C_TOOL}⚙ tool:${R} ${C_TOOL}%s${R}\n" "$tname" >&2
       local result; result=$(run_tool "$tname" "$targs")
-      HISTORY=$(echo "$HISTORY" | jq \
-        --arg id "$tid" --arg name "$tname" --arg content "$result" \
-        '. + [{"role":"tool","tool_call_id":$id,"name":$name,"content":$content}]')
+      if [ "${#result}" -gt "$TOOL_RESULT_LIMIT" ]; then
+        result="${result:0:$TOOL_RESULT_LIMIT}"$'\n\n'"[Output truncated to ${TOOL_RESULT_LIMIT} characters...]"
+      fi
+      HISTORY=$(printf '%s' "$result" | jq -Rs \
+        --argjson h "$(jq -cn --arg id "$tid" --arg name "$tname" '{tool_call_id:$id,name:$name}')" \
+        --slurpfile hist <(printf '%s' "$HISTORY") \
+        '$hist[0] + [{"role":"tool"} + $h + {"content":.}]')
       ((i++))
     done
   done
@@ -1087,8 +1585,8 @@ send_message() {
 save_chat() {
   local ts; ts=$(date +"%Y%m%d_%H%M%S")
   local f="$SAVE_DIR/chat_${ts}.txt"
-  { printf "tchat — %s\nProvider: %s  Model: %s\n%s\n\n" \
-      "$(date)" "$PROVIDER" "$MODEL" "$(printf '═%.0s' {1..50})"
+  { printf "tchat — %s\nProvider: %s  Connection: %s  Model: %s\n%s\n\n" \
+      "$(date)" "$PROVIDER" "$AUTH_MODE" "$MODEL" "$(printf '═%.0s' {1..50})"
     printf '%s\n' "$HISTORY" | jq -r '.[]|select(.role!="tool")|"[\(.role|ascii_upcase)]\n\(if .raw_content then (.raw_content[]?|select(.type=="text")|.text) else (.content//"") end)\n"'
   } > "$f"
   printf "  ${C_ASST}✓ Saved: %s${R}\n\n" "$f"
@@ -1116,30 +1614,39 @@ switch_provider() {
       *) printf "  ${C_ERR}Invalid option.${R}\n" ;;
     esac
   done
+  choose_auth_mode || return
   set_provider_defaults
-  local saved; saved=$(get_key "$PROVIDER")
-  if [ -n "$saved" ]; then
-    printf "  ${C_DIM}Found saved key. Use it? [Y/n]: ${R}"; read -r use
-    if [[ ! "$use" =~ ^[Nn] ]]; then API_KEY="$saved"
-    else printf "  ${C_USER}API key: ${R}"; read -r -s API_KEY; echo ""; save_key "$PROVIDER" "$API_KEY"; fi
-  else
-    printf "  ${C_USER}API key for %s: ${R}" "$PROVIDER"; read -r -s API_KEY; echo ""; save_key "$PROVIDER" "$API_KEY"
-  fi
   HISTORY="[]"; MODELS_CACHE=""; fetch_models; print_header
 }
 
 install_self() {
-  local target="$PREFIX/bin/tchat"
+  local dir target
+  if is_termux; then
+    dir="$PREFIX/bin"
+  else
+    # Outside Termux $PREFIX is usually unset; use the per-user bin dir.
+    dir="$HOME/.local/bin"
+  fi
+  mkdir -p "$dir" 2>/dev/null
+  target="$dir/tchat"
   [ -f "$target" ] && cp "$target" "${target}.backup" 2>/dev/null
-  cp "$0" "$target" && chmod +x "$target"
-  printf "  ${C_ASST}✓ Installed! Type 'tchat' anywhere.${R}\n\n"
+  if cp "$0" "$target" 2>/dev/null && chmod +x "$target"; then
+    printf "  ${C_ASST}✓ Installed to %s. Type 'tchat' anywhere.${R}\n" "$target"
+    case ":$PATH:" in
+      *":$dir:"*) ;;
+      *) printf "  ${C_DIM}Note: %s is not on your PATH. Add it to your shell profile.${R}\n" "$dir" ;;
+    esac
+    printf "\n"
+  else
+    printf "  ${C_ERR}✗ Could not install to %s.${R}\n\n" "$target"
+  fi
 }
 
 # ── INPUT WITH COMMAND PREVIEW ────────────
 COMMAND_HINTS=(
   "/help" "/q" "/quit" "/exit" "/clear" "/save" "/ls" "/list"
   "/switch" "/settings" "/install" "/balance" "/search " "/s "
-  "/model" "/default" "/memory" "/key" "/refresh"
+  "/model" "/default" "/memory" "/key" "/auth" "/login" "/refresh"
 )
 INPUT_HISTORY=()
 INPUT_HISTORY_POS=0
@@ -1284,8 +1791,12 @@ while true; do
     /s|/search)
       printf "  ${C_USER}Search: ${R}"; read -r q; search_models "$q" ;;
     /model)
-      printf "  ${C_USER}Model ID: ${R}"; read -r MODEL; MODEL=$(echo "$MODEL" | tr -d '[:space:]')
-      printf "  ${C_DIM}Switched to: ${C_USER}%s${R}\n\n" "$MODEL" ;;
+      printf "  ${C_USER}Model ID: ${R}"; read -r new_model; new_model=$(echo "$new_model" | tr -d '[:space:]')
+      if [ -n "$new_model" ]; then
+        MODEL="$new_model"; printf "  ${C_DIM}Switched to: ${C_USER}%s${R}\n\n" "$MODEL"
+      else
+        printf "  ${C_DIM}Cancelled. Still using %s.${R}\n\n" "$MODEL"
+      fi ;;
     /default)
       if save_current_model_as_default; then printf "  ${C_ASST}✓ Saved %s as the %s default.${R}\n\n" "$MODEL" "$PROVIDER"; fi ;;
     /default\ clear)
@@ -1299,10 +1810,18 @@ while true; do
       memory_add_fact "${input#/memory add }" && printf "  ${C_ASST}✓ Remembered.${R}\n\n" ;;
     /memory\ forget\ *)
       memory_forget_matching "${input#/memory forget }" && printf "  ${C_ASST}✓ Updated memory.${R}\n\n" ;;
+    /auth)
+      if choose_auth_mode; then
+        set_provider_defaults; HISTORY="[]"; MODELS_CACHE=""; fetch_models; print_header
+      fi ;;
+    /login)
+      if [ "$AUTH_MODE" = "cli" ]; then login_cli
+      else printf "  ${C_DIM}Current connection uses an API key. Run /auth to choose account login.${R}\n\n"; fi ;;
     /key)
-      printf "  ${C_USER}New key: ${R}"; read -r -s API_KEY; echo ""
-      save_key "$PROVIDER" "$API_KEY"
-      printf "  ${C_DIM}✓ Key saved.${R}\n\n"; MODELS_CACHE=""; fetch_models ;;
+      AUTH_MODE="api"
+      if configure_api_key true; then
+        save_auth_mode; set_provider_defaults; HISTORY="[]"; MODELS_CACHE=""; fetch_models
+      fi ;;
     /refresh)       MODELS_CACHE=""; fetch_models ;;
     /help)
       printf "\n  ${BOLD}Commands:${R}\n"
@@ -1313,9 +1832,11 @@ while true; do
       printf "  ${C_USER}/default clear${R} clear the saved provider default\n"
       printf "  ${C_USER}/memory${R}       manage compact persistent AI memory\n"
       printf "  ${C_USER}/switch${R}       switch provider\n"
+      printf "  ${C_USER}/auth${R}         choose API key or account CLI connection\n"
+      printf "  ${C_USER}/login${R}        sign in again with the selected provider CLI\n"
       printf "  ${C_USER}/balance${R}      check remaining credits / provider metrics\n"
       printf "  ${C_USER}/settings${R}     colors, memory, output limit, defaults\n"
-      printf "  ${C_USER}/key${R}          change & save API key\n"
+      printf "  ${C_USER}/key${R}          switch to API mode and change the saved key\n"
       printf "  ${C_USER}/save${R}         save conversation\n"
       printf "  ${C_USER}/ls${R}           list saved chats\n"
       printf "  ${C_USER}/clear${R}        reset conversation\n"

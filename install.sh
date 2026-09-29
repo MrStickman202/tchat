@@ -65,7 +65,8 @@ printf "  ${GREEN}✓ Dependencies OK${R}\n"
 
 # ── DOWNLOAD ─────────────────────────────
 printf "  ${DIM}Downloading tchat...${R}\n"
-TMP=$(mktemp /tmp/tchat.XXXXXX)
+# Termux has no writable /tmp; it sets $TMPDIR instead.
+TMP=$(mktemp "${TMPDIR:-/tmp}/tchat.XXXXXX")
 if ! curl -fsSL "$SCRIPT_URL" -o "$TMP"; then
   printf "  ${RED}✗ Download failed. Check your connection.${R}\n\n"
   rm -f "$TMP"
@@ -73,7 +74,7 @@ if ! curl -fsSL "$SCRIPT_URL" -o "$TMP"; then
 fi
 
 # verify it looks like a tchat script
-if ! grep -q "tchat" "$TMP" 2>/dev/null; then
+if ! grep -q "TCHAT_VERSION=" "$TMP" 2>/dev/null; then
   printf "  ${RED}✗ Downloaded file doesn't look right.${R}\n\n"
   rm -f "$TMP"
   exit 1

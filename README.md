@@ -14,6 +14,7 @@ Every feature, idea, design decision, improvement, and bug fix was planned and d
 
 * Supports multiple AI providers
 * Lets you use your own API keys
+* Or sign in with your existing Gemini CLI, Claude Code, or Codex CLI account (no API key needed)
 * Switch between different models
 * Search and browse available models
 * Create, read, and manage files
@@ -31,6 +32,17 @@ Every feature, idea, design decision, improvement, and bug fix was planned and d
 * Anthropic
 * OpenAI
 
+## Connection modes
+
+For Gemini, Anthropic, and OpenAI you can connect in two ways:
+
+* **API key**: full features, including file tools and approved terminal commands.
+* **Account login**: uses the provider's official CLI (`gemini`, `claude`, or `codex`) and your existing subscription. This mode is read-only: the AI can't write files or run commands through tchat.
+
+On Termux, OpenAI account login runs Codex inside an Ubuntu PRoot container. tchat can set this up for you automatically.
+
+Switch modes at any time with `/auth`.
+
 ## Requirements
 
 You need:
@@ -47,7 +59,13 @@ pkg install curl jq
 
 ## Installation
 
-Download the script, make it executable, and run it:
+Quick install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrStickman202/tchat/main/install.sh | bash
+```
+
+Or download the script, make it executable, and run it:
 
 ```bash
 chmod +x tchat.sh
@@ -77,6 +95,11 @@ Some useful commands:
 /model
 /default
 /switch
+/auth
+/login
+/key
+/balance
+/refresh
 /settings
 /memory
 /save
