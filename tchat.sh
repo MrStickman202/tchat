@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # ─────────────────────────────────────────
-#  tchat v3.5 — Multi-provider agentic chat
+#  tchat v3.7 — Multi-provider agentic chat
 #  Providers: OpenRouter, Gemini, Anthropic, OpenAI
 #  Auth: API keys, or existing Gemini/Claude/Codex CLI login
 #  deps: curl, jq  (pkg install curl jq)
 #  install: type /install inside the app
 # ─────────────────────────────────────────
 
-TCHAT_VERSION="3.5"
+TCHAT_VERSION="3.7"
 PROVIDER="${TCHAT_PROVIDER:-}"
 AUTH_MODE="${TCHAT_AUTH_MODE:-}"
 API_KEY=""
