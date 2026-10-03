@@ -8,7 +8,7 @@
 set -e
 
 REPO="MrStickman202/tchat"
-BRANCH="main"
+BRANCH="${TCHAT_BRANCH:-main}"  # override to install from another branch
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/tchat.sh"
 
 R="\033[0m"
