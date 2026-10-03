@@ -913,7 +913,12 @@ fetch_cli_models() {
       fi
       if [ -z "$full" ]; then
         full=$(scan_cli_model_ids)
-        [ -n "$full" ] && source="found in $(cli_display_name)"
+        if [ -n "$full" ]; then
+          # The scan only knows models that this CLI release knows, so show its version.
+          local cli_ver
+          cli_ver=$(run_provider_cli "$(cli_command)" --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1)
+          source="found in $(cli_display_name)${cli_ver:+ $cli_ver}"
+        fi
       fi
       # Short aliases first, then every full version, newest last.
       MODELS_CACHE=$(printf '%s\n' "$aliases"; printf '%s\n' "$full" | grep -Fxv -f <(printf '%s\n' "$aliases") | sed '/^$/d' | sort -uV) ;;
@@ -1034,6 +1039,11 @@ list_all_models() {
   done <<< "$MODELS_CACHE"
   if [ "$AUTH_MODE" = "cli" ] && [[ "$MODELS_SOURCE" == found\ in* ]]; then
     printf "\n  ${C_DIM}Full IDs were %s; some may not be enabled for your account.${R}\n" "$MODELS_SOURCE"
+    printf "  ${C_DIM}Newer models only show up after updating the CLI:${R}\n"
+    case "$PROVIDER" in
+      gemini)    printf "  ${C_USER}npm install -g @google/gemini-cli@latest${R}  ${C_DIM}then /refresh${R}\n" ;;
+      anthropic) printf "  ${C_USER}claude update${R}  ${C_DIM}then /refresh${R}\n" ;;
+    esac
     printf "  ${C_DIM}If tchat has a saved API key for this provider, it lists exactly what the API offers.${R}\n"
   fi
   printf "\n  ${C_DIM}Pick number to switch, Enter to cancel: ${R}"
