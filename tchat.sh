@@ -865,30 +865,75 @@ check_balance() {
 }
 
 # ── MODEL FETCH ──────────────────────────
-fetch_cli_models() {
-  local raw=""
+# Gemini CLI and Claude Code have no command that lists models, so tchat
+# looks for full model IDs inside the installed CLI. The script runs through
+# run_provider_cli so it also works inside the Ubuntu PRoot backend.
+# Args: $1 = CLI command, $2 = extended regex for one model ID.
+CLI_MODEL_SCAN_SCRIPT='
+p=$(command -v "$1") || exit 0
+p=$(readlink -f "$p" 2>/dev/null || printf "%s" "$p")
+q="[\"'"'"'\`]"
+if [[ "$p" == *.js ]] || [ "$(head -c 2 "$p" 2>/dev/null)" = "#!" ]; then
+  d=$(dirname "$p")
+  while [ "$d" != / ] && [ ! -f "$d/package.json" ]; do d=$(dirname "$d"); done
+  [ "$d" = / ] && d=$(dirname "$p")
+  grep -rhoE --include="*.js" --include="*.mjs" --include="*.cjs" "${q}($2)${q}" "$d"
+else
+  grep -aoE "${q}($2)${q}" "$p"
+fi 2>/dev/null | tr -d "\"'"'"'\`" | sort -u
+'
+
+scan_cli_model_ids() {
+  local pattern
   case "$PROVIDER" in
-    gemini)
-      MODELS_CACHE=$'auto\npro\nflash\nflash-lite' ;;
-    anthropic)
-      MODELS_CACHE=$'sonnet\nopus\nhaiku\nfable' ;;
+    # e.g. gemini-2.5-pro, gemini-2.0-flash-001, gemini-3-pro-preview, gemini-2.5-flash-preview-05-20
+    gemini)    pattern='gemini-[0-9]+([.][0-9]+)?-(pro|flash|flash-lite)(-[0-9]{3}|-preview(-[0-9]{2}-[0-9]{2,4})?)?' ;;
+    # e.g. claude-sonnet-4-5, claude-opus-4-1-20250805 (family prefixes like claude-opus-4 are skipped)
+    anthropic) pattern='claude-(opus|sonnet|haiku|fable)-([4-9]|[1-9][0-9])-[0-9]+(-[0-9]{8})?' ;;
+    *) return ;;
+  esac
+  run_provider_cli bash -c "$CLI_MODEL_SCAN_SCRIPT" _ "$(cli_command)" "$pattern" 2>/dev/null
+}
+
+MODELS_SOURCE=""
+fetch_cli_models() {
+  local raw="" aliases="" full="" source="" saved_key
+  case "$PROVIDER" in
+    gemini|anthropic)
+      if [ "$PROVIDER" = "gemini" ]; then aliases=$'auto\npro\nflash\nflash-lite'
+      else aliases=$'sonnet\nopus\nhaiku\nfable'; fi
+      printf "  ${C_DIM}Looking for models...${R}\n"
+      # A saved API key gives the exact list for the provider, so prefer it.
+      saved_key=$(get_key "$PROVIDER")
+      if [ -n "$saved_key" ]; then
+        local API_KEY="$saved_key"  # seen by fetch_api_models (dynamic scope)
+        fetch_api_models
+        full="$MODELS_CACHE"
+        [ -n "$full" ] && source="from your saved API key"
+      fi
+      if [ -z "$full" ]; then
+        full=$(scan_cli_model_ids)
+        [ -n "$full" ] && source="found in $(cli_display_name)"
+      fi
+      # Short aliases first, then every full version, newest last.
+      MODELS_CACHE=$(printf '%s\n' "$aliases"; printf '%s\n' "$full" | grep -Fxv -f <(printf '%s\n' "$aliases") | sed '/^$/d' | sort -uV) ;;
     openai)
       raw=$(run_provider_cli codex debug models 2>/dev/null || true)
       MODELS_CACHE=$(jq -r '[.models[]? | (.slug // .model // .id // empty)] | unique | .[]' <<< "$raw" 2>/dev/null)
       MODELS_CACHE=$(printf 'default\n%s\n' "$MODELS_CACHE" | sed '/^$/d' | sort -u) ;;
   esac
+  MODELS_SOURCE="$source"
   select_automatic_model
   local count; count=$(printf '%s\n' "$MODELS_CACHE" | sed '/^$/d' | wc -l | tr -d ' ')
-  printf "  ${C_DIM}Loaded ${C_USER}%s${R}${C_DIM} CLI model choices. Using ${C_USER}%s${R}${C_DIM}.${R}\n\n" "$count" "$MODEL"
+  printf "  ${C_DIM}Loaded ${C_USER}%s${R}${C_DIM} CLI model choices%s. Using ${C_USER}%s${R}${C_DIM}.${R}\n\n" \
+    "$count" "${source:+ ($source)}" "$MODEL"
 }
 
-fetch_models() {
-  if [ "$AUTH_MODE" = "cli" ]; then
-    fetch_cli_models
-    return
-  fi
-  printf "  ${C_DIM}Fetching models...${R}\n"
-  local response err
+# Sets MODELS_CACHE from the provider API using $API_KEY, and FETCH_RESPONSE
+# to the last raw response (for error messages).
+FETCH_RESPONSE=""
+fetch_api_models() {
+  local response
   MODELS_CACHE=""
   case "$PROVIDER" in
     openrouter)
@@ -930,8 +975,19 @@ fetch_models() {
         | select((test("realtime|audio|transcribe|tts|image|embedding|moderation|search|computer-use";"i"))|not)]
         | sort | .[]' <<< "$response" 2>/dev/null) ;;
   esac
+  FETCH_RESPONSE="${response:-}"
+}
+
+fetch_models() {
+  if [ "$AUTH_MODE" = "cli" ]; then
+    fetch_cli_models
+    return
+  fi
+  printf "  ${C_DIM}Fetching models...${R}\n"
+  local err
+  fetch_api_models
   if [ -z "$MODELS_CACHE" ]; then
-    err=$(jq -r '.error.message//.error//.message//empty' <<< "${response:-}" 2>/dev/null)
+    err=$(jq -r '.error.message//.error//.message//empty' <<< "$FETCH_RESPONSE" 2>/dev/null)
     printf "  ${C_ERR}✗ Could not fetch models%s${R}\n\n" "${err:+: $err}"
   else
     local count; count=$(printf '%s\n' "$MODELS_CACHE" | sed '/^$/d' | wc -l | tr -d ' ')
@@ -976,6 +1032,10 @@ list_all_models() {
     printf "  ${C_USER}%3d)${R} %s\n" "$i" "$id"
     i=$(( i + 1 ))
   done <<< "$MODELS_CACHE"
+  if [ "$AUTH_MODE" = "cli" ] && [[ "$MODELS_SOURCE" == found\ in* ]]; then
+    printf "\n  ${C_DIM}Full IDs were %s; some may not be enabled for your account.${R}\n" "$MODELS_SOURCE"
+    printf "  ${C_DIM}If tchat has a saved API key for this provider, it lists exactly what the API offers.${R}\n"
+  fi
   printf "\n  ${C_DIM}Pick number to switch, Enter to cancel: ${R}"
   read -r pick
   pick=$(echo "$pick" | tr -d '[:space:]')
